@@ -24,6 +24,3 @@ A focused implementation to reconstruct a chosen part of campus using 3D Gaussia
 - src/ — splatting and optimization code
 - notebooks/ — experiments/visualizations
 - results/ — renderings and videos
-
-## Notes
-- Detailed setup and commands will be added as modules land.
