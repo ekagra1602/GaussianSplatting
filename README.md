@@ -13,12 +13,7 @@ A focused implementation to reconstruct a chosen part of campus using 3D Gaussia
   - Minimal Gaussian splat rasterizer with alpha compositing, or
   - Simple optimization loop updating positions/scales/colors without DL frameworks, or
   - Tile-based binning and sorting for a small image.
-
-## Milestones
-- 9 Oct: Progress review + clear explanation of approach.
-- Later: Final demo + presentation to others.
-- Location for meeting: Office — Centerpoint 203-03.
-
+  
 ## Repo Structure (proposed)
 - data/ — images and calibration
 - src/ — splatting and optimization code
