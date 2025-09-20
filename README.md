@@ -1,4 +1,4 @@
-# Gaussian Splatting — Campus Reconstruction
+# Gaussian Splatting - Reconstruction of a part of Campus
 
 A focused implementation to reconstruct a chosen part of campus using 3D Gaussian Splatting (Kerbl et al., 2023). One core component will be implemented from scratch (no external libraries), even if it is an optimization submodule, to demonstrate understanding.
 
