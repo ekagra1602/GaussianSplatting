@@ -1,6 +1,6 @@
 Design Document
 
-Project: Gaussian Splatting for Campus Reconstruction
+Project: Gaussian Splatting
 Author: Ekagra Gupta
 Advisor: Prof. Heni Ben Amor
 Date: 9 September 2025
