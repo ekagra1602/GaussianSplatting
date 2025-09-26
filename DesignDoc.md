@@ -1,128 +1,166 @@
-Design Document
-
-Project: Gaussian Splatting
-Author: Ekagra Gupta
-Advisor: Prof. Heni Ben Amor
-Date: 9 September 2025
-
-⸻
-
-1. Background
-
-3D Gaussian Splatting (Kerbl et al., 2023) is a recent technique for real-time novel view synthesis. Instead of dense voxel grids or slow NeRF-style MLPs, it represents scenes as a set of anisotropic 3D Gaussians with position, scale, opacity, and color parameters. These Gaussians are projected into 2D screen space and rasterized as ellipses with alpha compospositing.
-
-This project implements a miniature Gaussian Splatting pipeline to reconstruct a chosen portion of the ASU campus. A baseline implementation will be set up using existing PyTorch-based GS code. To demonstrate deeper understanding, I will build a Tiny CPU Rasterizer from scratch, without relying on heavy libraries, to re-render a subset of the scene.
-
-⸻
-
-2. Goals
-	•	Reconstruct a campus scene (e.g., statue or courtyard) using Gaussian Splatting.
-	•	Implement from scratch a minimal CPU-based Gaussian rasterizer capable of rendering a small set of Gaussians.
-	•	Compare baseline GPU/optimized GS results with my custom rasterizer on accuracy and speed.
-	•	Deliver a demo video, reproducible code, and a presentation.
-
-⸻
-
-3. System Overview
-
-Pipeline
-	1.	Data Capture: Collect images/video of campus scene.
-	2.	Camera Poses: Use COLMAP for structure-from-motion and bundle adjustment.
-	3.	Baseline GS: Train a standard Gaussian Splatting model to reconstruct the scene.
-	4.	Custom Tiny Rasterizer:
-	•	Input: Gaussian parameters (position, scale, rotation, color, opacity).
-	•	Output: 2D image patch (low-res) rendered with CPU-only routines.
-	5.	Comparison: Render same view using both baseline and custom rasterizer.
-	6.	Evaluation: Compare outputs visually and quantitatively (PSNR, SSIM).
-
-⸻
-
-4. Design Details
-
-4.1 Data Representation
-
-Each Gaussian will be parameterized as:
-	•	Position: \mathbf{x} \in \mathbb{R}^3
-	•	Scale: \mathbf{s} \in \mathbb{R}^3
-	•	Rotation: R \in SO(3) (represented by quaternion)
-	•	Opacity: \alpha \in (0,1)
-	•	Color: c \in [0,1]^3
-
-4.2 Camera Model
-	•	Intrinsics: K (focal length, principal point)
-	•	Extrinsics: [R|t] (rotation + translation from COLMAP)
-	•	Projection: \mathbf{u} = K \cdot (R\mathbf{x} + t)
-
-4.3 Rasterization in Custom Module
-	1.	Projection: Transform 3D Gaussian center to screen space.
-	2.	Covariance Projection: Compute 2D ellipse covariance:
-\Sigma_{2D} \approx J \Sigma_{3D} J^T
-where J is Jacobian of projection.
-	3.	Evaluation: For each pixel p in a local 3σ bounding box, compute weight:
-w(p) = \exp\left(-\tfrac{1}{2}(p-\mu)^T \Sigma^{-1}(p-\mu)\right)
-	4.	Compositing: Use front-to-back alpha blending:
-C_{\text{out}} = C_{\text{in}}(1 - \alpha w) + c(\alpha w)
-
-4.4 Performance Constraints
-	•	Resolution limited to ≤ 256×256 for feasibility.
-	•	Small subset of Gaussians (≤ 5k) for testing.
-	•	Brute-force rasterization acceptable (no acceleration structures).
-
-⸻
-
-5. Implementation Plan
-
-Baseline
-	•	Use reference PyTorch GS implementation.
-	•	Train model for ~3–5k iterations on captured dataset.
-
-Tiny Rasterizer (Custom Piece)
-	•	Implement in Python + NumPy (no PyTorch autograd).
-	•	Components:
-	•	project_point() → 2D coordinates
-	•	compute_covariance() → ellipse covariance
-	•	render_gaussian() → per-Gaussian contribution to pixel buffer
-	•	alpha_composite() → combine Gaussians front-to-back
-	•	Test on synthetic toy scene (3 Gaussians) before campus data.
-
-⸻
-
-6. Evaluation Metrics
-	•	Qualitative: Visual side-by-side of baseline render vs. Tiny Rasterizer render.
-	•	Quantitative:
-	•	PSNR between two images.
-	•	SSIM structural similarity.
-	•	Performance: Time to render 256×256 frame.
-
-⸻
-
-7. Risks and Mitigations
-	•	COLMAP fails to register images → reduce resolution, take more photos, ensure texture-rich surfaces.
-	•	Tiny Rasterizer too slow → restrict to cropped patches or fewer Gaussians.
-	•	Numerical instability in covariance inversion → add ε to diagonals, use Cholesky.
-	•	Time constraint → baseline by Day 6, rasterizer by Day 10.
-
-⸻
-
-8. Timeline
-
-Days	Task	Deliverable
-1–2	Read paper, set up repo, select scene	Repo skeleton, success criteria
-3–4	Capture images, run COLMAP	Poses + dataset split
-5–6	Train baseline GS	First render + metrics
-7–10	Implement Tiny Rasterizer	Working toy render + campus patch render
-11–12	Ablations & comparison	Metrics table, visual side-by-sides
-13	Slides & report scaffold	Draft slides
-14	Dry runs & integration	Final demo run
-15	Final polish	Video, slides, repo release
 
 
-⸻
+# Design Document
 
-9. Deliverables
-	•	Code repo with baseline/ and custom/ modules.
-	•	Demo video: turntable render.
-	•	Slides: project background, method, results.
-	•	Report (4–6 pages).
+**Project:** Gaussian Splatting for Campus Reconstruction
+**Author:** Ekagra Gupta
+**Advisor:** Prof. [Name]
+**Date:** [Insert Date]
 
-⸻
+---
+
+## 1. Background
+
+3D Gaussian Splatting (Kerbl et al., 2023) is a state-of-the-art method for novel-view synthesis and 3D reconstruction. It represents a scene as a set of 3D anisotropic Gaussians, each parameterized by position, scale, orientation, opacity, and color. Rendering is performed by projecting Gaussians into screen space and alpha-compositing them as ellipses.
+
+The `live-it` project demonstrated that combining prebuilt research libraries (VGGT + gsplat) can accelerate the pipeline while maintaining high quality. VGGT (Visual Geometry Grounded Transformer, CVPR 2025) provides accurate camera poses and an initial 3D point cloud from video or images. The gsplat library (Nerfstudio team, JMLR 2025) implements a CUDA-optimized Gaussian Splatting trainer and renderer.
+
+This project applies the pipeline to reconstruct a chosen portion of the ASU campus within 15 days, while also implementing a **Tiny CPU Rasterizer** from scratch to demonstrate conceptual understanding.
+
+---
+
+## 2. Goals
+
+* **Reconstruct** a campus scene (e.g., courtyard, statue) from captured video/images.
+* **Use prebuilt libraries** (VGGT for pose estimation, gsplat for Gaussian Splatting training) to achieve high-quality results.
+* **Implement from scratch** a Tiny Rasterizer (CPU, low-res) to re-render a subset of the scene, proving understanding of the math and rendering process.
+* **Evaluate** the reconstruction quantitatively (PSNR, SSIM) and qualitatively (videos, turntables).
+* **Deliver** a reproducible pipeline, demo video, and presentation.
+
+---
+
+## 3. System Overview
+
+### Pipeline Flow
+
+1. **Data Capture**: Record video / capture frames of chosen campus scene.
+2. **Pose Estimation**: Use VGGT to estimate intrinsics, extrinsics, depth, and sparse point cloud. Export COLMAP-format files.
+3. **Optional Refinement**: Run COLMAP Bundle Adjustment (BA) on VGGT output to refine camera poses.
+4. **Gaussian Splatting Training (gsplat)**: Train 3D Gaussian Splatting model using provided poses and points. Includes densification, SH colors, and regularizers.
+5. **Custom Module (Tiny Rasterizer)**: CPU implementation of 3D→2D Gaussian projection and alpha compositing for ≤5k Gaussians at 256×256 resolution. Used for crops and comparison.
+6. **Evaluation**: Compare baseline gsplat render vs custom rasterizer (patches). Compute PSNR/SSIM on held-out views.
+7. **Visualization**: Export turntable and novel view renders; visualize final scene with Three.js viewer.
+
+---
+
+## 4. Design Details
+
+### 4.1 Data Representation
+
+Each Gaussian parameterized as:
+
+* **Position**: $x \in \mathbb{R}^3$
+* **Scale**: $s = (s_x, s_y, s_z)$
+* **Rotation**: quaternion $q \in \mathbb{R}^4$, normalized
+* **Opacity**: $\alpha \in (0,1)$
+* **Color**: RGB or SH coefficients
+
+### 4.2 Pose Estimation (VGGT)
+
+* Inputs: N frames of the scene.
+* Outputs: Camera intrinsics, extrinsics, depth maps, sparse 3D points.
+* Export: COLMAP-compatible files (`cameras.bin`, `images.bin`, `points3D.bin`).
+* Optional: COLMAP BA refinement for improved accuracy.
+
+### 4.3 Gaussian Splatting Training (gsplat)
+
+* Inputs: dataset in COLMAP format.
+* Features: CUDA rasterizer, densification, spherical harmonics (SH=0→2), exposure compensation, scale/opacity regularizers.
+* Training: 3–10k iterations, resolution 1–1.5k px.
+* Outputs: optimized Gaussian parameters; renders.
+
+### 4.4 Custom Module (Tiny Rasterizer)
+
+* **Projection**: World → camera (R, t), then to image via intrinsics K.
+* **Covariance projection**:
+
+  $$
+  \Sigma_{2D} \approx J \Sigma_{3D} J^T, \quad
+  \Sigma_{3D} = R_g \,\text{diag}(s_x^2, s_y^2, s_z^2)\, R_g^T
+  $$
+* **Gaussian evaluation**:
+
+  $$
+  w(p) = \exp\left(-\tfrac{1}{2}(p-\mu)^T \Sigma_{2D}^{-1}(p-\mu)\right)
+  $$
+* **Alpha compositing (front-to-back)**:
+
+  $$
+  C_\text{out} = C_\text{in}(1-\alpha w) + c(\alpha w)
+  $$
+* Scope: CPU, low-res (≤256×256), ≤5k Gaussians, crop render.
+
+### 4.5 Evaluation Metrics
+
+* PSNR / SSIM between gsplat renders and ground truth held-out views.
+* PSNR between Tiny Rasterizer patch and gsplat’s equivalent patch.
+* Qualitative: turntable videos, zoomed crops, side-by-side visuals.
+
+---
+
+## 5. Implementation Plan
+
+### Tools & Libraries
+
+* **VGGT**: pretrained transformer (FacebookResearch).
+* **gsplat**: Nerfstudio CUDA GS library.
+* **COLMAP**: optional BA.
+* **PyTorch**: tensor ops, training backend.
+* **NumPy**: Tiny Rasterizer.
+* **Three.js**: visualization of final `.glb`.
+
+### Repo Structure
+
+```
+repo/
+  data/campus_scene/       # frames, COLMAP outputs
+  src/
+    baseline/              # gsplat training & render
+    custom/                # tiny rasterizer
+    utils/                 # camera projection, colmap io
+  scripts/
+    run_vggt.sh
+    run_gsplat.sh
+    run_rasterizer.sh
+  slides/
+  report/
+  README.md
+```
+
+---
+
+## 6. Risks & Mitigations
+
+* **VGGT pose errors** → run COLMAP BA refinement.
+* **Training too slow** → downscale images, reduce iterations.
+* **Tiny Rasterizer too slow** → restrict to crop & few Gaussians.
+* **Numerical instability in Σ₂D inversion** → add ε to diagonal, fallback to axis-aligned.
+
+---
+
+## 7. Timeline
+
+| Days  | Task                                             | Deliverable                         |
+| ----- | ------------------------------------------------ | ----------------------------------- |
+| 1–2   | Setup env, repo, notes; stubs for rasterizer     | Repo skeleton, success criteria     |
+| 3–4   | Capture campus video/frames; run VGGT (→ COLMAP) | Dataset + poses                     |
+| 5–6   | Baseline gsplat training (~2–3k iters)           | First renders + metrics             |
+| 7–9   | Full gsplat training (→10k iters), tuning        | High-quality render video           |
+| 10–11 | Implement Tiny Rasterizer                        | Patch render + comparison           |
+| 12    | Ablations (VGGT vs VGGT+BA, gsplat vs custom)    | Metrics table + visuals             |
+| 13    | Draft slides                                     | Slide deck draft                    |
+| 14    | Dry run (scripts, demo pipeline)                 | Working pipeline run                |
+| 15    | Final polish                                     | Final slides + video + repo release |
+
+---
+
+## 8. Deliverables
+
+* **Reconstruction**: gsplat-trained model of campus scene.
+* **Custom module**: Tiny CPU Rasterizer.
+* **Demo video**: turntable + novel-view sweeps.
+* **Slides**: ~12 slides, with pipeline, math, results.
+* **Report**: 4–6 pages (method, results, discussion).
+* **Repo**: scripts, code, README with reproduction steps.
+
+---
