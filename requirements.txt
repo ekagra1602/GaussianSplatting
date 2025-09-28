@@ -1,0 +1,7 @@
+# core
+torch        # Colab usually has CUDA-enabled torch preinstalled
+gsplat
+pycolmap
+# VGGT: PyPI is not always available, so install from GitHub in the notebook (see below)
+# nerfstudio (optional; large)
+# nerfstudio[all]

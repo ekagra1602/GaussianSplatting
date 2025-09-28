@@ -1,2 +1,16 @@
 DesignDoc.md
 Timeline.md
+# python
+__pycache__/
+*.pyc
+.venv/
+# outputs
+outputs/
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+# colab
+*.ipynb_checkpoints/
+# data
+data/**/colmap_export/
