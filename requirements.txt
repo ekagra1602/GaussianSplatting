@@ -1,12 +1,12 @@
 # core
-gsplat
-pycolmap
 imageio[ffmpeg]
-torch==2.3.1
-torchvision==0.18.1
-torchaudio==2.3.1
-opencv-python-headless==4.9.0.80
-numpy==1.26.4
+gsplat>=1.5
+pycolmap>=3.12
+torch>=2.5
+torchvision>=0.20
+torchaudio>=2.5
+opencv-python-headless
+numpy
 imageio
 tqdm
 git+https://github.com/facebookresearch/segment-anything-2.git
