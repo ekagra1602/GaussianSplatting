@@ -11,5 +11,4 @@ imageio
 tqdm
 git+https://github.com/facebookresearch/segment-anything-2.git
 # VGGT: PyPI is not always available, so install from GitHub in the notebook (see below)
-# nerfstudio (optional; large)
 # nerfstudio[all]
