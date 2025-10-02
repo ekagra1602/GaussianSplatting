@@ -1,6 +1,4 @@
-from pathlib import Path
-
-fixed_code = '''import os, cv2, numpy as np, torch, sam2
+import os, cv2, numpy as np, torch, sam2
 from glob import glob
 from pathlib import Path
 from sam2.sam2_image_predictor import SAM2ImagePredictor
@@ -59,7 +57,3 @@ for p in frames:
     cv2.imwrite(out_mask, m)
 
 print(f"Done. Wrote masks to: {MASK_DIR}")
-'''
-
-Path("scripts/sam2_mask_dir.py").write_text(fixed_code)
-print("✅ Fixed negative stride issue!")
