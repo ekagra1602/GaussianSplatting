@@ -29,7 +29,7 @@ def main():
 
     out = Path(args.out)
     frames_dir = out / "frames_raw"
-    clean_dir = out / "frames"
+    clean_dir = out / "images"
     split_dir  = out / "splits"
     for d in [frames_dir, clean_dir, split_dir]:
         d.mkdir(parents=True, exist_ok=True)
