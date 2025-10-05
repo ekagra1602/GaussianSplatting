@@ -1,10 +1,10 @@
 # core
 imageio[ffmpeg]
-gsplat>=1.5
-pycolmap>=3.12
-torch>=2.5
-torchvision>=0.20
-torchaudio>=2.5
+gsplat
+pycolmap
+torch
+torchvision
+torchaudio
 opencv-python-headless
 numpy
 imageio
