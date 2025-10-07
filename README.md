@@ -1,6 +1,6 @@
 # Gaussian Splatting for Campus Reconstruction
 
-This project reconstructs a portion of the ASU campus using **3D Gaussian Splatting**.  
+This project reconstructs the lantern at Hayden Lawn at ASU campus using **3D Gaussian Splatting**.  
 It combines **VGGT** (Visual Geometry Grounded Transformer, CVPR 2025) for pose estimation with **gsplat** (Nerfstudio’s CUDA Gaussian Splatting library, JMLR 2025) for training and rendering.
 
 ## 📌 Goals
