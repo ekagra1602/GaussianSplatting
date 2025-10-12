@@ -1,0 +1,242 @@
+# ============================================================
+# COPY THESE CELLS TO YOUR COLAB NOTEBOOK
+# Add them after your existing setup cells
+# ============================================================
+
+# ============================================================
+# CELL 1: Install Spectral-GS Dependencies
+# ============================================================
+!pip install scipy
+print("✅ Spectral-GS dependencies installed!")
+
+# ============================================================
+# CELL 2: Verify Spectral-GS Installation
+# ============================================================
+import sys
+sys.path.insert(0, '/content/GaussianSplatting/src')
+
+try:
+    from spectral_gs import compute_spectral_entropy, SpectralStrategy, apply_view_consistent_filter
+    print("✅ Spectral-GS modules imported successfully!")
+
+    # Quick test
+    import torch
+    test_scales = torch.randn(10, 3).abs() + 0.1
+    test_quats = torch.randn(10, 4)
+    test_quats = test_quats / torch.norm(test_quats, dim=-1, keepdim=True)
+
+    entropy = compute_spectral_entropy(test_scales, test_quats)
+    print(f"   Test entropy computation: mean = {entropy.mean():.3f}")
+    print("   ✓ All components working!")
+
+except ImportError as e:
+    print(f"❌ Import failed: {e}")
+    print("\n📝 Troubleshooting:")
+    print("1. Make sure you pushed spectral_gs code to your GitHub repo")
+    print("2. Run 'git pull' to update your Colab repository")
+    print("3. Check that /content/GaussianSplatting/src/spectral_gs/ exists")
+
+# ============================================================
+# CELL 3: Train with Spectral-GS (MAIN TRAINING)
+# ============================================================
+%cd /content/GaussianSplatting
+
+print("🚀 Starting Spectral-GS Training...")
+print("=" * 60)
+
+!python scripts/train_spectral_gs.py \
+  --data_dir /content/GaussianSplatting/lantern_ds \
+  --result_dir /content/GaussianSplatting/results/lantern_spectral_30k \
+  --max_steps 30000 \
+  --data_factor 1 \
+  --spectral_threshold 0.5 \
+  --enable_spectral_splitting \
+  --enable_filtering \
+  --save_ply \
+  --log_every 100 \
+  --save_every 5000 \
+  --verbose
+
+print("\n" + "=" * 60)
+print("🎉 Spectral-GS training complete!")
+print("=" * 60)
+
+# ============================================================
+# CELL 4: Check Results
+# ============================================================
+import os
+
+result_dir = "/content/GaussianSplatting/results/lantern_spectral_30k"
+
+print("📊 Training Results\n")
+print("=" * 60)
+
+if os.path.exists(result_dir):
+    # List all files
+    files = os.listdir(result_dir)
+
+    # Count checkpoints
+    checkpoints = [f for f in files if f.endswith('.pt')]
+    print(f"✅ Checkpoints saved: {len(checkpoints)}")
+
+    # Check for final model
+    if os.path.exists(f"{result_dir}/final.pt"):
+        size = os.path.getsize(f"{result_dir}/final.pt") / (1024*1024)
+        print(f"✅ Final model: {size:.1f} MB")
+
+    if os.path.exists(f"{result_dir}/final.ply"):
+        size = os.path.getsize(f"{result_dir}/final.ply") / (1024*1024)
+        print(f"✅ Final PLY: {size:.1f} MB")
+
+    print(f"\n📁 Full results at: {result_dir}")
+else:
+    print("❌ Results directory not found!")
+
+print("=" * 60)
+
+# ============================================================
+# CELL 5: Download Results
+# ============================================================
+from google.colab import files
+
+# Download final PLY file for viewing
+ply_path = "/content/GaussianSplatting/results/lantern_spectral_30k/final.ply"
+
+if os.path.exists(ply_path):
+    print(f"📥 Downloading: {ply_path}")
+    files.download(ply_path)
+    print("✅ Download complete!")
+else:
+    print(f"❌ PLY file not found at: {ply_path}")
+    print("\nAvailable files:")
+    !ls -lh /content/GaussianSplatting/results/lantern_spectral_30k/
+
+# ============================================================
+# CELL 6: Backup to Google Drive (RECOMMENDED)
+# ============================================================
+from google.colab import drive
+
+# Mount Drive if not already mounted
+drive.mount('/content/drive')
+
+BACKUP_DIR = "/content/drive/MyDrive/GaussianSplatting_Backup"
+SOURCE_DIR = "/content/GaussianSplatting/results"
+
+print("💾 Backing up results to Google Drive...")
+!mkdir -p {BACKUP_DIR}
+!rsync -av --progress {SOURCE_DIR}/ {BACKUP_DIR}/results/
+
+print("\n✅ Backup complete!")
+print(f"📁 Saved to: {BACKUP_DIR}/results/")
+
+# ============================================================
+# OPTIONAL: Side-by-Side Comparison (Baseline vs Spectral-GS)
+# ============================================================
+
+# First train baseline (if not already done)
+%cd /content/gsplat/examples
+!python simple_trainer.py default \
+  --data_dir /content/GaussianSplatting/lantern_ds \
+  --result_dir /content/GaussianSplatting/results/lantern_baseline_30k \
+  --max_steps 30000 \
+  --save_ply
+
+print("\n✅ Baseline training complete!\n")
+
+# Then train Spectral-GS
+%cd /content/GaussianSplatting
+!python scripts/train_spectral_gs.py \
+  --data_dir /content/GaussianSplatting/lantern_ds \
+  --result_dir /content/GaussianSplatting/results/lantern_spectral_30k \
+  --max_steps 30000 \
+  --spectral_threshold 0.5 \
+  --enable_spectral_splitting \
+  --verbose
+
+print("\n✅ Spectral-GS training complete!")
+
+# Compare results
+import os
+import glob
+
+print("\n" + "=" * 60)
+print("📊 COMPARISON: Baseline vs Spectral-GS")
+print("=" * 60)
+
+for name, path in [
+    ("Baseline", "/content/GaussianSplatting/results/lantern_baseline_30k"),
+    ("Spectral-GS", "/content/GaussianSplatting/results/lantern_spectral_30k")
+]:
+    print(f"\n{name}:")
+    if os.path.exists(path):
+        if os.path.exists(f"{path}/final.ply"):
+            size = os.path.getsize(f"{path}/final.ply") / (1024*1024)
+            print(f"  ✅ PLY size: {size:.1f} MB")
+        else:
+            print(f"  ⚠️  No PLY file found")
+    else:
+        print(f"  ❌ Not trained")
+
+print("\n" + "=" * 60)
+
+# ============================================================
+# QUICK TEST: Fast 5K iteration test
+# ============================================================
+
+# For quick testing (5-10 minutes)
+%cd /content/GaussianSplatting
+
+!python scripts/train_spectral_gs.py \
+  --data_dir /content/GaussianSplatting/lantern_ds \
+  --result_dir /content/GaussianSplatting/results/lantern_spectral_test \
+  --max_steps 5000 \
+  --data_factor 2 \
+  --spectral_threshold 0.5 \
+  --enable_spectral_splitting \
+  --save_ply \
+  --verbose
+
+print("✅ Quick test complete! Check results above.")
+
+# ============================================================
+# TROUBLESHOOTING CELL
+# ============================================================
+
+print("🔍 Diagnostics\n")
+print("=" * 60)
+
+# Check Python version
+import sys
+print(f"Python: {sys.version}")
+
+# Check PyTorch
+import torch
+print(f"PyTorch: {torch.__version__}")
+print(f"CUDA available: {torch.cuda.is_available()}")
+if torch.cuda.is_available():
+    print(f"CUDA version: {torch.version.cuda}")
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+
+# Check gsplat
+try:
+    import gsplat
+    print(f"gsplat: {gsplat.__version__}")
+except:
+    print("gsplat: NOT INSTALLED")
+
+# Check scipy
+try:
+    import scipy
+    print(f"scipy: {scipy.__version__}")
+except:
+    print("scipy: NOT INSTALLED (run: !pip install scipy)")
+
+# Check repo structure
+print("\n📁 Repository structure:")
+!ls -la /content/GaussianSplatting/src/
+
+# Check dataset
+print("\n📁 Dataset structure:")
+!ls -la /content/GaussianSplatting/lantern_ds/
+
+print("\n" + "=" * 60)
