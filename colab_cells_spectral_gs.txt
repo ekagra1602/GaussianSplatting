@@ -51,9 +51,7 @@ print("=" * 60)
   --data_factor 1 \
   --spectral_threshold 0.5 \
   --enable_spectral_splitting \
-  --save_ply \
   --log_every 100 \
-  --save_every 5000 \
   --verbose
 
 print("\n" + "=" * 60)
@@ -74,18 +72,15 @@ if os.path.exists(result_dir):
     # List all files
     files = os.listdir(result_dir)
 
-    # Count checkpoints
-    checkpoints = [f for f in files if f.endswith('.pt')]
-    print(f"✅ Checkpoints saved: {len(checkpoints)}")
-
-    # Check for final model
+    # Check for final model files
     if os.path.exists(f"{result_dir}/final.pt"):
         size = os.path.getsize(f"{result_dir}/final.pt") / (1024*1024)
-        print(f"✅ Final model: {size:.1f} MB")
+        print(f"✅ final.pt: {size:.1f} MB (PyTorch checkpoint)")
 
     if os.path.exists(f"{result_dir}/final.ply"):
         size = os.path.getsize(f"{result_dir}/final.ply") / (1024*1024)
-        print(f"✅ Final PLY: {size:.1f} MB")
+        print(f"✅ final.ply: {size:.1f} MB (Viewable 3D model)")
+        print(f"\n📌 View at: https://antimatter15.com/splat/")
 
     print(f"\n📁 Full results at: {result_dir}")
 else:
@@ -192,7 +187,6 @@ print("\n" + "=" * 60)
   --data_factor 2 \
   --spectral_threshold 0.5 \
   --enable_spectral_splitting \
-  --save_ply \
   --verbose
 
 print("✅ Quick test complete! Check results above.")

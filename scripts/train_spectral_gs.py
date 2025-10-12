@@ -398,10 +398,6 @@ def train(args):
                     f"Needles: {low_entropy}"
                 )
 
-            # Save checkpoint
-            if args.save_ply and step > 0 and step % args.save_every == 0:
-                save_checkpoint(params, result_dir / f"checkpoint_{step:06d}.pt")
-
             step += 1
             pbar.update(1)
 
@@ -413,17 +409,90 @@ def train(args):
     print("Training completed!")
 
     # Save final model
-    if args.save_ply:
-        print(f"\nSaving final checkpoint to {result_dir}/final.pt")
-        save_checkpoint(params, result_dir / "final.pt")
+    print(f"\n💾 Saving final model...")
+    save_checkpoint(params, result_dir / "final.pt")
+    save_ply(params, result_dir / "final.ply")
 
-    print(f"\nResults saved to: {result_dir}")
+    print(f"\n✅ Results saved to: {result_dir}")
+    print(f"   - final.pt: PyTorch checkpoint")
+    print(f"   - final.ply: Viewable 3D Gaussian model")
+    print(f"\n📌 View your scene at: https://antimatter15.com/splat/")
+    print(f"   Just drag and drop the final.ply file!")
 
 
 def save_checkpoint(params: torch.nn.ParameterDict, path: Path):
     """Save model checkpoint."""
     checkpoint = {k: v.detach().cpu() for k, v in params.items()}
     torch.save(checkpoint, path)
+
+
+def save_ply(params: torch.nn.ParameterDict, path: Path):
+    """
+    Save Gaussian model as PLY file for viewing in 3DGS viewers.
+
+    Format compatible with https://antimatter15.com/splat/ and other viewers.
+    """
+    import struct
+
+    # Move to CPU and convert to numpy
+    means = params["means"].detach().cpu().numpy()
+    scales = torch.exp(params["scales"]).detach().cpu().numpy()
+    quats = F.normalize(params["quats"], dim=-1).detach().cpu().numpy()
+    opacities = torch.sigmoid(params["opacities"]).detach().cpu().numpy().flatten()
+    sh0 = torch.sigmoid(params["sh0"]).squeeze(1).detach().cpu().numpy()  # [N, 3]
+
+    N = means.shape[0]
+
+    # Create PLY header
+    header = f"""ply
+format binary_little_endian 1.0
+element vertex {N}
+property float x
+property float y
+property float z
+property float nx
+property float ny
+property float nz
+property float f_dc_0
+property float f_dc_1
+property float f_dc_2
+property float opacity
+property float scale_0
+property float scale_1
+property float scale_2
+property float rot_0
+property float rot_1
+property float rot_2
+property float rot_3
+end_header
+"""
+
+    # Write PLY file
+    with open(path, 'wb') as f:
+        f.write(header.encode('utf-8'))
+
+        # Write binary data
+        for i in range(N):
+            # Position
+            f.write(struct.pack('fff', means[i, 0], means[i, 1], means[i, 2]))
+
+            # Normals (set to 0)
+            f.write(struct.pack('fff', 0.0, 0.0, 0.0))
+
+            # SH coefficients (RGB)
+            f.write(struct.pack('fff', sh0[i, 0], sh0[i, 1], sh0[i, 2]))
+
+            # Opacity
+            f.write(struct.pack('f', opacities[i]))
+
+            # Scales
+            f.write(struct.pack('fff', scales[i, 0], scales[i, 1], scales[i, 2]))
+
+            # Rotation (quaternion)
+            f.write(struct.pack('ffff', quats[i, 0], quats[i, 1], quats[i, 2], quats[i, 3]))
+
+    print(f"✅ Saved PLY with {N} Gaussians to {path}")
+    print(f"   File size: {path.stat().st_size / (1024*1024):.1f} MB")
 
 
 def main():
@@ -460,8 +529,6 @@ def main():
 
     # Logging args
     parser.add_argument("--log_every", type=int, default=100, help="Logging frequency")
-    parser.add_argument("--save_every", type=int, default=5000, help="Checkpoint save frequency")
-    parser.add_argument("--save_ply", action="store_true", default=True, help="Save PLY files")
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
 
     args = parser.parse_args()

@@ -62,9 +62,12 @@ python scripts/train_spectral_gs.py \
   --max_steps 10000 \
   --spectral_threshold 0.5 \
   --enable_spectral_splitting \
-  --enable_filtering \
   --verbose
 ```
+
+**Output files:**
+- `results/spectral_gs/final.pt`: PyTorch checkpoint (for resuming training)
+- `results/spectral_gs/final.ply`: Viewable 3D model (drag & drop into https://antimatter15.com/splat/)
 
 ### Quick Commands
 ```bash
@@ -155,6 +158,7 @@ Each 3D Gaussian is parameterized by:
 - ✅ No pycolmap dependency (uses simplified dataset loader)
 - ✅ Proper gradient flow for densification
 - ✅ Colab-compatible with no additional fixes needed
+- ✅ Automatic PLY export for viewing in 3DGS viewers
 
 **Key parameters:**
 - `--spectral_threshold 0.5`: Lower = more aggressive needle splitting

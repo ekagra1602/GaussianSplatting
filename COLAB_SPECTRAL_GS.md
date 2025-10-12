@@ -73,6 +73,7 @@ print("🚀 Starting Spectral-GS Training...")
 print("=" * 60)
 
 # Run Spectral-GS training (all Colab compatibility built-in)
+# Automatically exports final.ply and final.pt at the end
 !python scripts/train_spectral_gs.py \
   --data_dir /content/GaussianSplatting/lantern_ds \
   --result_dir /content/GaussianSplatting/results/lantern_spectral_30k \
@@ -80,9 +81,7 @@ print("=" * 60)
   --data_factor 1 \
   --spectral_threshold 0.5 \
   --enable_spectral_splitting \
-  --save_ply \
   --log_every 100 \
-  --save_every 5000 \
   --verbose
 
 print("\n" + "=" * 60)
@@ -249,15 +248,21 @@ Step 00500 | Loss: 0.0234 | PSNR: 28.45 | Gaussians: 125430 | Entropy: 0.723 | N
 
 ## Downloading Results
 
+The training script automatically saves both files at the end:
+- **final.ply**: Viewable 3D Gaussian model (drag & drop into viewer)
+- **final.pt**: PyTorch checkpoint (for resuming or analysis)
+
 ```python
 from google.colab import files
 
-# Download final PLY
+# Download the viewable PLY file
 files.download("/content/GaussianSplatting/results/lantern_spectral/final.ply")
 
-# Download checkpoint
+# Optional: Download PyTorch checkpoint
 files.download("/content/GaussianSplatting/results/lantern_spectral/final.pt")
 ```
+
+**View your scene**: Open https://antimatter15.com/splat/ and drag & drop `final.ply`
 
 ## Next Steps
 
