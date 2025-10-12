@@ -312,26 +312,13 @@ def train(args):
             viewmat = torch.linalg.inv(camtoworld).unsqueeze(0)  # [1, 4, 4]
             K_batched = K.unsqueeze(0)  # [1, 3, 3]
 
-            # Compute 2D projections manually (for densification strategy)
-            means_homo = torch.cat([params["means"], torch.ones_like(params["means"][:, :1])], dim=-1)
-            means_cam = (viewmat[0] @ means_homo.T).T  # [N, 4]
-            means_proj = (K_batched[0] @ means_cam[:, :3].T).T  # [N, 3]
-            means2d = means_proj[:, :2] / means_proj[:, 2:3]  # [N, 2]
-            depths = means_cam[:, 2]  # [N]
-            radii = (scales.max(dim=1)[0] * K_batched[0, 0, 0] / depths.clamp(min=0.1)).long().clamp(min=0)
-
-            # Retain gradients on means2d
-            means2d.retain_grad()
-
-            # Prepare info for strategy
+            # Prepare empty info for strategy (will be filled after rasterization)
             info = {
-                "means2d": means2d,
-                "radii": radii,
                 "width": W,
                 "height": H,
             }
 
-            # Call strategy pre-backward
+            # Call strategy pre-backward (gradients not needed here)
             strategy.step_pre_backward(params, optimizers, strategy_state, step, info)
 
             # Rasterize
@@ -354,17 +341,13 @@ def train(args):
             # Compute loss (no filtering during training to preserve gradients)
             loss, metrics = compute_loss(rendered_image, image, ssim_lambda=args.ssim_lambda)
 
-            # Add tiny dummy loss to connect means2d to computation graph
-            dummy_loss = (means2d * 0.0).sum()
-            loss = loss + dummy_loss
-
             # Backward
             for optimizer in optimizers.values():
                 optimizer.zero_grad()
 
             loss.backward()
 
-            # Update info with render_info
+            # Update info with render_info (this contains means2d with gradients)
             info.update(render_info)
 
             # Call strategy post-backward (with warmup to let gradients establish)
