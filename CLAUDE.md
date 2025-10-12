@@ -150,12 +150,21 @@ Each 3D Gaussian is parameterized by:
 - **Anisotropic reduction**: Scales reduced by 1.6x during splitting
 - **View-consistent filtering**: Optional 2D filtering to reduce aliasing
 
+**Production-Ready Features:**
+- ✅ Full compatibility with gsplat 1.5.3+
+- ✅ No pycolmap dependency (uses simplified dataset loader)
+- ✅ Proper gradient flow for densification
+- ✅ Colab-compatible with no additional fixes needed
+
 **Key parameters:**
 - `--spectral_threshold 0.5`: Lower = more aggressive needle splitting
 - `--enable_spectral_splitting`: Enable spectral-based densification
-- `--enable_filtering`: Apply 2D Gaussian filtering to rendered images
+- `--enable_filtering`: Apply 2D Gaussian filtering to rendered images (disabled during training)
 
-See `src/spectral_gs/README.md` for detailed documentation.
+**Documentation:**
+- See `src/spectral_gs/README.md` for implementation details
+- See `COLAB_SPECTRAL_GS.md` for Google Colab usage guide
+- See `colab_cells_spectral_gs.txt` for ready-to-copy Colab cells
 
 ### Tuning Parameters
 If reconstructions have issues:

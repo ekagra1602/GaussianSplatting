@@ -51,7 +51,6 @@ print("=" * 60)
   --data_factor 1 \
   --spectral_threshold 0.5 \
   --enable_spectral_splitting \
-  --enable_filtering \
   --save_ply \
   --log_every 100 \
   --save_every 5000 \
