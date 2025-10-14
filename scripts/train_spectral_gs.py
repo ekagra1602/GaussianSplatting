@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Spectral-GS Training Script (Colab-Compatible Version)
+Spectral-GS Training Script
 Train 3D Gaussian Splatting with Spectral Entropy-based densification.
 
 Based on:
@@ -33,221 +33,13 @@ from gsplat.rendering import rasterization
 # Import gsplat's COLMAP loader (must run from gsplat/examples directory)
 from datasets.colmap import Dataset as ColmapDataset, Parser
 
-# KNN implementation (gsplat 1.5.3+ doesn't have knn in utils)
-def knn(points, k):
-    """Compute k-nearest neighbor distances."""
-    dists = torch.cdist(points, points)
-    knn_dists, _ = torch.topk(dists, k, largest=False, dim=1)
-    return knn_dists
+# Note: Using gsplat's KNN from utils (sklearn-based)
 
 # Import spectral-gs components
 from spectral_gs import SpectralStrategy, apply_view_consistent_filter, compute_spectral_entropy
 
-
-def read_colmap_bin_array(path):
-    """Read COLMAP binary file into numpy array."""
-    with open(path, "rb") as fid:
-        width, height, channels = np.fromfile(fid, np.uint64, 3)
-        return np.fromfile(fid, np.float64, int(width * height * channels)).reshape((int(height), int(width), int(channels)))
-
-
-def read_cameras_binary(path_to_model_file):
-    """Read COLMAP cameras.bin file."""
-    cameras = {}
-    with open(path_to_model_file, "rb") as fid:
-        num_cameras = np.fromfile(fid, np.uint64, 1)[0]
-        for _ in range(int(num_cameras)):
-            camera_id = np.fromfile(fid, np.uint32, 1)[0]
-            model_id = np.fromfile(fid, np.int32, 1)[0]
-            width = np.fromfile(fid, np.uint64, 1)[0]
-            height = np.fromfile(fid, np.uint64, 1)[0]
-            params = np.fromfile(fid, np.float64, 4)  # fx, fy, cx, cy for PINHOLE
-            cameras[camera_id] = {
-                'model': 'PINHOLE',
-                'width': int(width),
-                'height': int(height),
-                'params': params  # [fx, fy, cx, cy]
-            }
-    return cameras
-
-
-def read_images_binary(path_to_model_file):
-    """Read COLMAP images.bin file."""
-    images = {}
-    with open(path_to_model_file, "rb") as fid:
-        num_images = np.fromfile(fid, np.uint64, 1)[0]
-        for _ in range(int(num_images)):
-            image_id = np.fromfile(fid, np.uint32, 1)[0]
-            qw, qx, qy, qz = np.fromfile(fid, np.float64, 4)
-            tx, ty, tz = np.fromfile(fid, np.float64, 3)
-            camera_id = np.fromfile(fid, np.uint32, 1)[0]
-
-            # Read image name
-            image_name = ""
-            while True:
-                char = np.fromfile(fid, np.uint8, 1)[0]
-                if char == 0:
-                    break
-                image_name += chr(char)
-
-            # Skip 2D points
-            num_points2D = np.fromfile(fid, np.uint64, 1)[0]
-            np.fromfile(fid, np.float64, int(num_points2D) * 3)  # x, y, point3D_id
-
-            images[image_id] = {
-                'qvec': np.array([qw, qx, qy, qz]),
-                'tvec': np.array([tx, ty, tz]),
-                'camera_id': int(camera_id),
-                'name': image_name
-            }
-    return images
-
-
-def read_points3D_binary(path_to_model_file):
-    """Read COLMAP points3D.bin file."""
-    points3D = []
-    colors = []
-    with open(path_to_model_file, "rb") as fid:
-        num_points = np.fromfile(fid, np.uint64, 1)[0]
-        for _ in range(int(num_points)):
-            point_id = np.fromfile(fid, np.uint64, 1)[0]
-            xyz = np.fromfile(fid, np.float64, 3)
-            rgb = np.fromfile(fid, np.uint8, 3)
-            error = np.fromfile(fid, np.float64, 1)[0]
-
-            # Skip track
-            track_length = np.fromfile(fid, np.uint64, 1)[0]
-            np.fromfile(fid, np.uint32, int(track_length) * 2)  # image_id, point2D_idx
-
-            points3D.append(xyz)
-            colors.append(rgb / 255.0)  # Normalize to [0, 1]
-
-    return np.array(points3D, dtype=np.float32), np.array(colors, dtype=np.float32)
-
-
-def qvec2rotmat(qvec):
-    """Convert quaternion to rotation matrix."""
-    return np.array([
-        [1 - 2 * qvec[2]**2 - 2 * qvec[3]**2,
-         2 * qvec[1] * qvec[2] - 2 * qvec[0] * qvec[3],
-         2 * qvec[3] * qvec[1] + 2 * qvec[0] * qvec[2]],
-        [2 * qvec[1] * qvec[2] + 2 * qvec[0] * qvec[3],
-         1 - 2 * qvec[1]**2 - 2 * qvec[3]**2,
-         2 * qvec[2] * qvec[3] - 2 * qvec[0] * qvec[1]],
-        [2 * qvec[3] * qvec[1] - 2 * qvec[0] * qvec[2],
-         2 * qvec[2] * qvec[3] + 2 * qvec[0] * qvec[1],
-         1 - 2 * qvec[1]**2 - 2 * qvec[2]**2]
-    ])
-
-
-class COLMAPDataset(torch.utils.data.Dataset):
-    """COLMAP dataset loader that reads actual binary files."""
-
-    def __init__(self, data_dir: str, split: str = "train", data_factor: int = 1):
-        self.data_dir = Path(data_dir)
-        self.split = split
-        self.data_factor = data_factor
-
-        # Load COLMAP sparse reconstruction
-        sparse_dir = self.data_dir / "sparse" / "0"
-        print(f"Loading COLMAP data from {sparse_dir}...")
-
-        self.cameras = read_cameras_binary(str(sparse_dir / "cameras.bin"))
-        self.colmap_images = read_images_binary(str(sparse_dir / "images.bin"))
-        self.points, self.point_colors = read_points3D_binary(str(sparse_dir / "points3D.bin"))
-
-        print(f"Loaded {len(self.cameras)} cameras")
-        print(f"Loaded {len(self.colmap_images)} images")
-        print(f"Loaded {len(self.points)} sparse points")
-
-        # Load actual images
-        images_dir = self.data_dir / "images"
-        if not images_dir.exists():
-            raise ValueError(f"Images directory not found: {images_dir}")
-
-        # Filter images based on split
-        split_file = self.data_dir / "splits" / f"{split}.txt"
-        if split_file.exists():
-            with open(split_file) as f:
-                valid_names = set(line.strip() for line in f)
-        else:
-            valid_names = None  # Use all images
-
-        # Load images and their corresponding COLMAP data
-        self.images = []
-        self.image_names = []
-        self.image_data = []  # Store COLMAP image data
-
-        for img_id, img_data in self.colmap_images.items():
-            img_name = img_data['name']
-
-            # Check if in split
-            if valid_names is not None and img_name not in valid_names:
-                continue
-
-            img_path = images_dir / img_name
-            if not img_path.exists():
-                print(f"Warning: Image {img_name} not found, skipping")
-                continue
-
-            # Load image
-            img = imageio.imread(img_path)
-            if data_factor > 1:
-                img = img[::data_factor, ::data_factor]
-
-            self.images.append(torch.from_numpy(img).float() / 255.0)
-            self.image_names.append(img_name)
-            self.image_data.append(img_data)
-
-        if len(self.images) == 0:
-            raise ValueError(f"No images loaded from {data_dir}")
-
-        print(f"Loaded {len(self.images)} images for {split} split")
-
-    def __len__(self):
-        return len(self.images)
-
-    def __getitem__(self, idx):
-        image = self.images[idx]
-        img_data = self.image_data[idx]
-
-        # Get camera parameters
-        camera = self.cameras[img_data['camera_id']]
-        fx, fy, cx, cy = camera['params']
-
-        # Apply downsampling to intrinsics
-        if self.data_factor > 1:
-            fx /= self.data_factor
-            fy /= self.data_factor
-            cx /= self.data_factor
-            cy /= self.data_factor
-
-        K = torch.tensor([
-            [fx, 0, cx],
-            [0, fy, cy],
-            [0, 0, 1]
-        ], dtype=torch.float32)
-
-        # Convert COLMAP pose (world-to-camera) to camera-to-world
-        qvec = img_data['qvec']
-        tvec = img_data['tvec']
-
-        R = qvec2rotmat(qvec)
-        # COLMAP stores world-to-camera: x_cam = R * x_world + t
-        # We need camera-to-world: x_world = R^T * (x_cam - t) = R^T * x_cam - R^T * t
-        R_inv = R.T
-        t_inv = -R_inv @ tvec
-
-        camtoworld = np.eye(4, dtype=np.float32)
-        camtoworld[:3, :3] = R_inv
-        camtoworld[:3, 3] = t_inv
-
-        return {
-            "image": image,
-            "K": K,
-            "camtoworld": torch.from_numpy(camtoworld),
-            "image_name": self.image_names[idx],
-        }
+# Import gsplat utils
+from utils import rgb_to_sh, knn as knn_sklearn
 
 
 def init_gaussians(points: np.ndarray, colors: np.ndarray, init_scale: float = 1.0) -> Dict[str, torch.nn.Parameter]:
@@ -268,19 +60,20 @@ def init_gaussians(points: np.ndarray, colors: np.ndarray, init_scale: float = 1
     points = torch.from_numpy(points).float().to(device)
     colors = torch.from_numpy(colors).float().to(device)
 
-    # Initialize scales based on KNN distances
-    dist2_avg = (knn(points, 4)[:, 1:] ** 2).mean(dim=-1)
+    # Initialize scales based on KNN distances (using gsplat's KNN)
+    dist2_avg = (knn_sklearn(points, 4)[:, 1:] ** 2).mean(dim=-1)
     scales = torch.log(torch.sqrt(dist2_avg) * init_scale).unsqueeze(-1).repeat(1, 3)
 
     # Random quaternions
     quats = torch.rand((N, 4), device=device)
     quats = quats / torch.norm(quats, dim=-1, keepdim=True)
 
-    # Initialize opacities (in logit space)
-    opacities = torch.logit(torch.ones((N, 1), device=device) * 0.1)
+    # Initialize opacities (in logit space) - [N] not [N, 1] to match baseline
+    opacities = torch.logit(torch.full((N,), 0.1, device=device))
 
-    # Spherical harmonics (degree 0 = RGB)
-    sh0 = torch.logit(colors).unsqueeze(1)  # [N, 1, 3]
+    # Spherical harmonics (degree 0 = RGB) - use rgb_to_sh like baseline
+    sh0 = rgb_to_sh(colors).unsqueeze(1)  # [N, 1, 3] in SH space
+    shN = torch.zeros((N, 0, 3), device=device)  # Empty higher-order SH (degree 0 only)
 
     # Create parameter dict
     params = torch.nn.ParameterDict({
@@ -289,6 +82,7 @@ def init_gaussians(points: np.ndarray, colors: np.ndarray, init_scale: float = 1
         "quats": torch.nn.Parameter(quats),
         "opacities": torch.nn.Parameter(opacities),
         "sh0": torch.nn.Parameter(sh0),
+        "shN": torch.nn.Parameter(shN),
     })
 
     return params
@@ -302,6 +96,7 @@ def create_optimizers(params: torch.nn.ParameterDict, lr_scale: float = 1.0) -> 
         "quats": torch.optim.Adam([params["quats"]], lr=1e-3 * lr_scale, eps=1e-15),
         "opacities": torch.optim.Adam([params["opacities"]], lr=5e-2 * lr_scale, eps=1e-15),
         "sh0": torch.optim.Adam([params["sh0"]], lr=2.5e-3 * lr_scale, eps=1e-15),
+        "shN": torch.optim.Adam([params["shN"]], lr=2.5e-3 / 20 * lr_scale, eps=1e-15),
     }
     return optimizers
 
@@ -373,7 +168,7 @@ def train(args):
     result_dir = Path(args.result_dir)
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load dataset using gsplat's COLMAP loader (known to work with baseline)
+    # Load dataset using gsplat's COLMAP loader (exactly like baseline)
     print(f"\nLoading dataset from {args.data_dir}...")
     parser = Parser(
         data_dir=args.data_dir,
@@ -381,16 +176,16 @@ def train(args):
         normalize=True,
         test_every=8,
     )
-    scene_data = ColmapDataset(
+    trainset = ColmapDataset(
         parser,
         split="train",
     )
 
-    train_loader = DataLoader(scene_data, batch_size=1, shuffle=True, num_workers=0)
+    train_loader = DataLoader(trainset, batch_size=1, shuffle=True, num_workers=0)
 
     # Initialize Gaussians from COLMAP sparse points
     print("\nInitializing Gaussians...")
-    params = init_gaussians(parser.points, parser.points_rgb, init_scale=args.init_scale)
+    params = init_gaussians(parser.points, parser.points_rgb / 255.0, init_scale=args.init_scale)
     print(f"Initialized {len(params['means'])} Gaussians")
 
     # Create optimizers
@@ -433,16 +228,17 @@ def train(args):
             if step >= args.max_steps:
                 break
 
-            # Move batch to device
-            image = batch["image"][0].to(device)  # [H, W, 3]
+            # Move batch to device (image is in [0, 255] range from gsplat's Dataset)
+            image = batch["image"][0].to(device) / 255.0  # [H, W, 3] normalize to [0, 1]
             K = batch["K"][0].to(device)  # [3, 3]
             camtoworld = batch["camtoworld"][0].to(device)  # [4, 4]
 
             H, W = image.shape[:2]
 
-            # Prepare Gaussian parameters (fix shapes for gsplat 1.5.3+)
-            colors = torch.sigmoid(params["sh0"]).squeeze(1)  # [N, 3] (removed middle dim)
-            opacities = torch.sigmoid(params["opacities"]).squeeze(-1)  # [N] (removed last dim)
+            # Prepare Gaussian parameters for rendering (match baseline exactly)
+            # Concatenate sh0 and shN like baseline (shN is empty for degree 0)
+            colors = torch.cat([params["sh0"], params["shN"]], 1)  # [N, 1, 3] in SH space
+            opacities = torch.sigmoid(params["opacities"])  # [N]
             scales = torch.exp(params["scales"])  # [N, 3]
             quats = F.normalize(params["quats"], dim=-1)  # [N, 4]
 
@@ -456,7 +252,7 @@ def train(args):
             means_proj = (K_batched[0] @ means_cam[:, :3].T).T
             means2d_placeholder = means_proj[:, :2] / means_proj[:, 2:3]
             depths = means_cam[:, 2]
-            radii_placeholder = (scales.max(dim=1)[0] * K_batched[0, 0, 0] / depths.clamp(min=0.1)).long().clamp(min=0)
+            radii_placeholder = (scales.max(dim=1)[0] * K_batched[0, 0, 0] / depths.clamp(min=0.1)).long().clamp(min=0).unsqueeze(0)
 
             # Prepare info for strategy
             info = {
@@ -469,7 +265,7 @@ def train(args):
             # Call strategy pre-backward
             strategy.step_pre_backward(params, optimizers, strategy_state, step, info)
 
-            # Rasterize
+            # Rasterize (pass sh_degree since colors are in SH space)
             renders, alphas, render_info = rasterization(
                 means=params["means"],
                 quats=quats,
@@ -480,6 +276,7 @@ def train(args):
                 Ks=K_batched,
                 width=W,
                 height=H,
+                sh_degree=0,  # We only have degree 0 (DC component)
                 packed=False,
                 absgrad=(step < args.refine_stop_iter and strategy.absgrad),
             )
@@ -507,24 +304,6 @@ def train(args):
                 try:
                     strategy.step_post_backward(params, optimizers, strategy_state, step, info, packed=False)
 
-                    # Hard cap on number of Gaussians
-                    n_gaussians = len(params["means"])
-                    if n_gaussians > args.max_gaussians:
-                        # Sort by opacity and keep top max_gaussians
-                        with torch.no_grad():
-                            opacities = torch.sigmoid(params["opacities"]).squeeze(-1)
-                            _, indices = torch.topk(opacities, args.max_gaussians)
-
-                            # Prune to top-k
-                            for key in params.keys():
-                                params[key] = torch.nn.Parameter(params[key][indices])
-
-                            # Reset optimizers with new parameters
-                            optimizers = create_optimizers(params)
-
-                            if args.verbose:
-                                print(f"  [Cap] Pruned {n_gaussians - args.max_gaussians} Gaussians (keeping top {args.max_gaussians})")
-
                 except (AttributeError, TypeError) as e:
                     if step < 100 and args.verbose:
                         print(f"Warning at step {step}: {e}")
@@ -532,6 +311,27 @@ def train(args):
             # Optimizer step
             for optimizer in optimizers.values():
                 optimizer.step()
+
+            # Hard cap on number of Gaussians (AFTER strategy and optimizer)
+            n_gaussians = len(params["means"])
+            if n_gaussians > args.max_gaussians:
+                # Sort by opacity and keep top max_gaussians
+                with torch.no_grad():
+                    opacities_sorted = torch.sigmoid(params["opacities"])  # [N]
+                    _, indices = torch.topk(opacities_sorted, args.max_gaussians)
+
+                    # Prune to top-k
+                    for key in params.keys():
+                        params[key] = torch.nn.Parameter(params[key][indices])
+
+                    # Reset optimizers with new parameters
+                    optimizers = create_optimizers(params)
+
+                    # Reset strategy state to match new Gaussian count
+                    strategy_state = strategy.initialize_state()
+
+                    if args.verbose:
+                        print(f"  [Cap] Pruned {n_gaussians - args.max_gaussians} Gaussians (keeping top {args.max_gaussians})")
 
             # Logging
             if step % args.log_every == 0:
@@ -592,12 +392,10 @@ def save_ply(params: torch.nn.ParameterDict, path: Path):
     means = params["means"].detach().cpu().numpy()
     scales = torch.exp(params["scales"]).detach().cpu().numpy()
     quats = F.normalize(params["quats"], dim=-1).detach().cpu().numpy()
-    opacities = torch.sigmoid(params["opacities"]).detach().cpu().numpy().flatten()
+    opacities = torch.sigmoid(params["opacities"]).detach().cpu().numpy()  # [N]
 
-    # Convert RGB colors to SH DC coefficients (proper format for 3DGS viewers)
-    rgb = torch.sigmoid(params["sh0"]).squeeze(1)  # [N, 3] in [0, 1]
-    C0 = 0.28209479177387814  # SH constant: 0.5 / sqrt(pi)
-    sh_dc = ((rgb - 0.5) / C0).detach().cpu().numpy()  # [N, 3]
+    # sh0 is already in SH space (from rgb_to_sh), just extract it
+    sh_dc = params["sh0"].squeeze(1).detach().cpu().numpy()  # [N, 3] in SH space
 
     N = means.shape[0]
 
