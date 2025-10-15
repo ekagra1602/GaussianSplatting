@@ -89,14 +89,19 @@ def init_gaussians(points: np.ndarray, colors: np.ndarray, init_scale: float = 1
 
 
 def create_optimizers(params: torch.nn.ParameterDict, lr_scale: float = 1.0) -> Dict[str, torch.optim.Optimizer]:
-    """Create optimizers for Gaussian parameters."""
+    """Create optimizers for Gaussian parameters.
+
+    Args:
+        params: Parameter dictionary
+        lr_scale: Scale factor for means learning rate (should be scene_scale)
+    """
     optimizers = {
-        "means": torch.optim.Adam([params["means"]], lr=1.6e-4 * lr_scale, eps=1e-15),
-        "scales": torch.optim.Adam([params["scales"]], lr=5e-3 * lr_scale, eps=1e-15),
-        "quats": torch.optim.Adam([params["quats"]], lr=1e-3 * lr_scale, eps=1e-15),
-        "opacities": torch.optim.Adam([params["opacities"]], lr=5e-2 * lr_scale, eps=1e-15),
-        "sh0": torch.optim.Adam([params["sh0"]], lr=2.5e-3 * lr_scale, eps=1e-15),
-        "shN": torch.optim.Adam([params["shN"]], lr=2.5e-3 / 20 * lr_scale, eps=1e-15),
+        "means": torch.optim.Adam([params["means"]], lr=1.6e-4 * lr_scale, eps=1e-15),  # Only means LR is scaled!
+        "scales": torch.optim.Adam([params["scales"]], lr=5e-3, eps=1e-15),
+        "quats": torch.optim.Adam([params["quats"]], lr=1e-3, eps=1e-15),
+        "opacities": torch.optim.Adam([params["opacities"]], lr=5e-2, eps=1e-15),
+        "sh0": torch.optim.Adam([params["sh0"]], lr=2.5e-3, eps=1e-15),
+        "shN": torch.optim.Adam([params["shN"]], lr=2.5e-3 / 20, eps=1e-15),
     }
     return optimizers
 
@@ -183,13 +188,17 @@ def train(args):
 
     train_loader = DataLoader(trainset, batch_size=1, shuffle=True, num_workers=0)
 
+    # Get scene scale from parser (CRITICAL for proper LR scaling!)
+    scene_scale = parser.scene_scale * 1.1
+    print(f"Scene scale: {scene_scale}")
+
     # Initialize Gaussians from COLMAP sparse points
     print("\nInitializing Gaussians...")
     params = init_gaussians(parser.points, parser.points_rgb / 255.0, init_scale=args.init_scale)
     print(f"Initialized {len(params['means'])} Gaussians")
 
-    # Create optimizers
-    optimizers = create_optimizers(params)
+    # Create optimizers with scene_scale adjusted learning rates
+    optimizers = create_optimizers(params, lr_scale=scene_scale)
 
     # Create strategy with aggressive pruning
     print("\nInitializing Spectral-GS strategy...")
@@ -265,7 +274,7 @@ def train(args):
             # Call strategy pre-backward
             strategy.step_pre_backward(params, optimizers, strategy_state, step, info)
 
-            # Rasterize (gsplat infers sh_degree from colors shape [N, K, 3])
+            # Rasterize (must pass sh_degree when colors are in SH format [N, K, 3])
             renders, alphas, render_info = rasterization(
                 means=params["means"],
                 quats=quats,
@@ -276,6 +285,7 @@ def train(args):
                 Ks=K_batched,
                 width=W,
                 height=H,
+                sh_degree=0,  # We have degree 0 (K=1, DC component only)
                 packed=False,
                 absgrad=(step < args.refine_stop_iter and strategy.absgrad),
             )
@@ -289,8 +299,18 @@ def train(args):
             if "means2d" in info and info["means2d"] is not None:
                 info["means2d"].retain_grad()
 
-            # Compute loss (no filtering during training to preserve gradients)
-            loss, metrics = compute_loss(rendered_image, image, ssim_lambda=args.ssim_lambda)
+            # Compute loss - TEMPORARILY USE PURE L1 TO DEBUG
+            l1loss = F.l1_loss(renders[0], image)
+            loss = l1loss
+
+            mse = F.mse_loss(renders[0], image)
+            psnr = -10.0 * torch.log10(mse)
+
+            metrics = {
+                "loss": loss.item(),
+                "l1": l1loss.item(),
+                "psnr": psnr.item(),
+            }
 
             # Backward
             for optimizer in optimizers.values():
@@ -323,8 +343,8 @@ def train(args):
                     for key in params.keys():
                         params[key] = torch.nn.Parameter(params[key][indices])
 
-                    # Reset optimizers with new parameters
-                    optimizers = create_optimizers(params)
+                    # Reset optimizers with new parameters (with scene_scale!)
+                    optimizers = create_optimizers(params, lr_scale=scene_scale)
 
                     # Reset strategy state to match new Gaussian count
                     strategy_state = strategy.initialize_state()
@@ -382,71 +402,30 @@ def save_checkpoint(params: torch.nn.ParameterDict, path: Path):
 def save_ply(params: torch.nn.ParameterDict, path: Path):
     """
     Save Gaussian model as PLY file for viewing in 3DGS viewers.
-
-    Format compatible with https://antimatter15.com/splat/ and other viewers.
+    Uses gsplat's export_splats for correct formatting.
     """
-    import struct
+    from gsplat import export_splats
 
-    # Move to CPU and convert to numpy
-    means = params["means"].detach().cpu().numpy()
-    scales = torch.exp(params["scales"]).detach().cpu().numpy()
-    quats = F.normalize(params["quats"], dim=-1).detach().cpu().numpy()
-    opacities = torch.sigmoid(params["opacities"]).detach().cpu().numpy()  # [N]
+    # export_splats expects raw parameters (log-space scales, logit-space opacities)
+    means = params["means"]  # [N, 3]
+    scales = params["scales"]  # [N, 3] in log space
+    quats = params["quats"]  # [N, 4]
+    opacities = params["opacities"]  # [N] in logit space
+    sh0 = params["sh0"]  # [N, 1, 3]
+    shN = params["shN"]  # [N, 0, 3] for degree 0
 
-    # sh0 is already in SH space (from rgb_to_sh), just extract it
-    sh_dc = params["sh0"].squeeze(1).detach().cpu().numpy()  # [N, 3] in SH space
+    export_splats(
+        means=means,
+        scales=scales,
+        quats=quats,
+        opacities=opacities,
+        sh0=sh0,
+        shN=shN,
+        format="ply",
+        save_to=str(path),
+    )
 
-    N = means.shape[0]
-
-    # Create PLY header
-    header = f"""ply
-format binary_little_endian 1.0
-element vertex {N}
-property float x
-property float y
-property float z
-property float nx
-property float ny
-property float nz
-property float f_dc_0
-property float f_dc_1
-property float f_dc_2
-property float opacity
-property float scale_0
-property float scale_1
-property float scale_2
-property float rot_0
-property float rot_1
-property float rot_2
-property float rot_3
-end_header
-"""
-
-    # Write PLY file
-    with open(path, 'wb') as f:
-        f.write(header.encode('utf-8'))
-
-        # Write binary data
-        for i in range(N):
-            # Position
-            f.write(struct.pack('fff', means[i, 0], means[i, 1], means[i, 2]))
-
-            # Normals (set to 0)
-            f.write(struct.pack('fff', 0.0, 0.0, 0.0))
-
-            # SH DC coefficients (not RGB - in SH space)
-            f.write(struct.pack('fff', sh_dc[i, 0], sh_dc[i, 1], sh_dc[i, 2]))
-
-            # Opacity
-            f.write(struct.pack('f', opacities[i]))
-
-            # Scales
-            f.write(struct.pack('fff', scales[i, 0], scales[i, 1], scales[i, 2]))
-
-            # Rotation (quaternion)
-            f.write(struct.pack('ffff', quats[i, 0], quats[i, 1], quats[i, 2], quats[i, 3]))
-
-    print(f"✅ Saved PLY with {N} Gaussians to {path}")
+    print(f"✅ Saved PLY with {len(means)} Gaussians to {path}")
     print(f"   File size: {path.stat().st_size / (1024*1024):.1f} MB")
 
 
