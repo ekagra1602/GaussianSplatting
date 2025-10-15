@@ -240,7 +240,7 @@ def train(args):
             colors = torch.cat([params["sh0"], params["shN"]], 1)  # [N, 1, 3] in SH space
             opacities = torch.sigmoid(params["opacities"])  # [N]
             scales = torch.exp(params["scales"])  # [N, 3]
-            quats = F.normalize(params["quats"], dim=-1)  # [N, 4]
+            quats = params["quats"]  # [N, 4] - gsplat normalizes internally!
 
             # Prepare for rendering
             viewmat = torch.linalg.inv(camtoworld).unsqueeze(0)  # [1, 4, 4]
@@ -265,7 +265,7 @@ def train(args):
             # Call strategy pre-backward
             strategy.step_pre_backward(params, optimizers, strategy_state, step, info)
 
-            # Rasterize (pass sh_degree since colors are in SH space)
+            # Rasterize (gsplat infers sh_degree from colors shape [N, K, 3])
             renders, alphas, render_info = rasterization(
                 means=params["means"],
                 quats=quats,
@@ -276,7 +276,6 @@ def train(args):
                 Ks=K_batched,
                 width=W,
                 height=H,
-                sh_degree=0,  # We only have degree 0 (DC component)
                 packed=False,
                 absgrad=(step < args.refine_stop_iter and strategy.absgrad),
             )
