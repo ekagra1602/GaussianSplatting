@@ -45,14 +45,17 @@ def main():
     fps = max(1.0, math.ceil(args.target_frames / dur))
     reader.close()
 
-    # Write PNG/JPG frames
-    # Tip: PNG for lossless; JPG q=2 for speed/size. Here we’ll do jpg.
+    # Write JPG frames with reasonable quality
+    # -q:v 2 is very compressed; use 1 for better quality (1 is highest for JPEG)
     pattern = str(frames_dir / "frame_%05d.jpg")
-    run(["ffmpeg", "-y", "-i", args.video, "-vf", f"fps={fps}", "-q:v", "2", pattern])
+    run(["ffmpeg", "-y", "-i", args.video, "-vf", f"fps={fps}", "-q:v", "1", pattern])
 
     # 2) Blur cull + downscale
     kept = []
-    for p in tqdm(sorted(frames_dir.glob("*.jpg"))):
+    total_frames = len(list(frames_dir.glob("*.jpg")))
+    print(f"Processing {total_frames} extracted frames...")
+
+    for p in tqdm(sorted(frames_dir.glob("*.jpg")), desc="Filtering frames"):
         img = cv2.imread(str(p))
         if img is None: continue
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -64,15 +67,25 @@ def main():
         cv2.imwrite(str(out_name), img2, [cv2.IMWRITE_JPEG_QUALITY, 95])
         kept.append(out_name)
 
+    print(f"Kept {len(kept)}/{total_frames} frames after blur filtering (threshold: {args.min_sharpness})")
+
+    if len(kept) == 0:
+        raise ValueError(f"No frames survived blur filtering! Try lowering --min_sharpness (current: {args.min_sharpness})")
+
+    if len(kept) < args.target_frames * 0.5:
+        print(f"WARNING: Only {len(kept)} frames survived, much less than target {args.target_frames}. Consider lowering --min_sharpness")
+
     # 3) Enforce max ~target_frames by evenly subsampling if too many survived
+    # Use np.linspace for better temporal distribution
     if len(kept) > args.target_frames:
-        step = len(kept) / args.target_frames
-        keep_idxs = {int(i*step) for i in range(args.target_frames)}
-        selected = [f for i, f in enumerate(kept) if i in keep_idxs]
+        original_count = len(kept)
+        indices = np.linspace(0, len(kept) - 1, args.target_frames, dtype=int)
+        selected = [kept[i] for i in indices]
         for f in kept:
             if f not in selected:
                 f.unlink(missing_ok=True)
         kept = selected
+        print(f"Subsampled from {original_count} to {len(selected)} frames with even temporal spacing")
 
     # 4) Train/test split (every 10th frame to test)
     train_txt = split_dir / "train.txt"
@@ -81,8 +94,19 @@ def main():
         for i, f in enumerate(sorted(clean_dir.glob("*.jpg"))):
             (te if (i % 10 == 0) else tr).write(f.name + "\n")
 
-    print(f"Done. Kept {len(kept)} frames at {clean_dir}")
-    print(f"Splits at {split_dir}/train.txt and test.txt")
+    # Count train/test split
+    num_train = len([line for line in open(train_txt)])
+    num_test = len([line for line in open(test_txt)])
+
+    print(f"\n{'='*60}")
+    print(f"✅ Dataset preparation complete!")
+    print(f"{'='*60}")
+    print(f"Total frames:     {len(kept)}")
+    print(f"Training frames:  {num_train}")
+    print(f"Test frames:      {num_test}")
+    print(f"Output directory: {clean_dir}")
+    print(f"Splits at:        {split_dir}/train.txt and test.txt")
+    print(f"{'='*60}")
 
 if __name__ == "__main__":
     main()

@@ -121,22 +121,27 @@ def split_gaussian_spectral(
     scale: torch.Tensor,
     quat: torch.Tensor,
     opacity: torch.Tensor,
-    scale_factor: float = 1.6,
+    scale_factor: float = 2.0,  # INCREASED from 1.6 to 2.0 for more aggressive reduction
     num_splits: int = 2
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Split a single Gaussian with spectral awareness.
+    Split a single Gaussian with spectral awareness using ANISOTROPIC reduction.
 
-    The splitting strategy:
-    1. Reduce covariance anisotropically (divide scales by scale_factor)
-    2. Sample new positions along the principal axis (largest scale direction)
+    The splitting strategy (from Spectral-GS paper, Equation 10-11):
+    1. Reduce covariance ANISOTROPICALLY:
+       - Principal axis (largest scale): divided by scale_factor (2.0 for more aggressive)
+       - Other two axes: divided by 1.0 (unchanged)
+    2. Sample new positions along the principal axis
+
+    This increases entropy by making the Gaussian more spherical.
+    Note: Paper uses 1.6, but we use 2.0 for faster entropy increase.
 
     Args:
         mean: [3] center position
         scale: [3] scale factors
         quat: [4] quaternion
         opacity: [] opacity value
-        scale_factor: Factor to reduce scales by (default: 1.6 per paper)
+        scale_factor: Factor to reduce principal axis by (default: 2.0, paper uses 1.6)
         num_splits: Number of new Gaussians to create (default: 2)
 
     Returns:
@@ -145,11 +150,16 @@ def split_gaussian_spectral(
         new_quats: [num_splits, 4]
         new_opacities: [num_splits]
     """
-    # Reduce scales anisotropically
-    new_scales = scale / scale_factor
-
-    # Find principal direction (direction of largest scale)
+    # Find principal direction (direction of largest scale) FIRST
     principal_idx = torch.argmax(scale)
+
+    # ANISOTROPIC reduction: Only reduce principal axis, keep others unchanged
+    # Paper uses k_i = k·𝟙{s_i² = ρ(Σ)} + k₀ where k=0.6, k₀=1.0 → factor=1.6
+    # We use factor=2.0 for more aggressive needle reduction
+    reduction_factors = torch.ones_like(scale)  # Start with 1.0 for all axes
+    reduction_factors[principal_idx] = scale_factor  # Only principal axis gets reduced (by 2.0)
+
+    new_scales = scale / reduction_factors  # Anisotropic reduction!
     R = quat_to_rotation_matrix(quat)  # [3, 3]
     principal_dir = R[:, principal_idx]  # [3]
 

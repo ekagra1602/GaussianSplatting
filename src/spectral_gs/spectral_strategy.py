@@ -46,7 +46,7 @@ class SpectralStrategy(DefaultStrategy):
         # Spectral-GS specific parameters
         spectral_threshold: float = 0.5,
         enable_spectral_splitting: bool = True,
-        spectral_split_factor: float = 1.6,
+        spectral_split_factor: float = 2.0,  # Increased from 1.6 for more aggressive needle reduction
     ):
         """
         Args:
@@ -155,10 +155,10 @@ class SpectralStrategy(DefaultStrategy):
         is_visible = opacities > 0.005  # Reasonable threshold
         candidate_split = is_needle & is_visible
 
-        # Limit splitting to 10% of candidates per iteration for stability
-        # This prevents massive parameter changes that break optimizer state
+        # Limit splitting per iteration for both stability AND performance
+        # Increased to be more aggressive at reducing needles
         n_candidates = candidate_split.sum().item()
-        max_splits_per_iter = max(1000, int(0.1 * n_candidates))  # At least 1000, or 10% of candidates
+        max_splits_per_iter = min(3000, max(500, int(0.05 * n_candidates)))  # Cap at 3000 max (5% of candidates)
 
         if n_candidates > max_splits_per_iter:
             # Select top max_splits_per_iter needles by lowest entropy
