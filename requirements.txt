@@ -10,5 +10,5 @@ numpy
 scipy
 imageio
 tqdm
-# VGGT: PyPI is not always available, so install from GitHub in the notebook (see below)
+# VGGT
 # nerfstudio[all]
